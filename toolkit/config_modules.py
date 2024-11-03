@@ -11,6 +11,8 @@ ImgExt = Literal['jpg', 'png', 'webp']
 
 SaveFormat = Literal['safetensors', 'diffusers']
 
+CHARACTOR_MODELES={}
+
 if TYPE_CHECKING:
     from toolkit.guidance import GuidanceType
     from toolkit.logging import EmptyLogger
@@ -667,6 +669,7 @@ def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:
 class GenerateImageConfig:
     def __init__(
             self,
+            character_name: str = '',
             prompt: str = '',
             prompt_2: Optional[str] = None,
             width: int = 512,
@@ -692,6 +695,7 @@ class GenerateImageConfig:
             extra_values: List[float] = None,  # extra values to save with prompt file
             logger: Optional[EmptyLogger] = None,
     ):
+        self.charactor = character_name
         self.width: int = width
         self.height: int = height
         self.num_inference_steps: int = num_inference_steps
@@ -782,11 +786,15 @@ class GenerateImageConfig:
         return os.path.join(self.output_folder, filename)
 
     def save_image(self, image, count: int = 0, max_count=0):
+        global CHARACTOR_MODELES
         # make parent dirs
         os.makedirs(self.output_folder, exist_ok=True)
         self.set_gen_time()
         # TODO save image gen header info for A1111 and us, our seeds probably wont match
-        image.save(self.get_image_path(count, max_count))
+        image_path=self.get_image_path(count, max_count)
+        image.save(image_path)
+        if self.charactor:
+            CHARACTOR_MODELES[self.charactor] = image_path
         # do prompt file
         if self.add_prompt_file:
             self.save_prompt_file(count, max_count)

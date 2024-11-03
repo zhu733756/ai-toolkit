@@ -18,6 +18,7 @@ import random
 class GenerateConfig:
 
     def __init__(self, **kwargs):
+        self.characters: List[str]
         self.prompts: List[str]
         self.sampler = kwargs.get('sampler', 'ddpm')
         self.width = kwargs.get('width', 512)
@@ -29,6 +30,7 @@ class GenerateConfig:
         self.sample_steps = kwargs.get('sample_steps', 20)
         self.prompt_2 = kwargs.get('prompt_2', None)
         self.neg_2 = kwargs.get('neg_2', None)
+        self.characters = kwargs.get('characters', None)
         self.prompts = kwargs.get('prompts', None)
         self.guidance_rescale = kwargs.get('guidance_rescale', 0.0)
         self.compile = kwargs.get('compile', False)
@@ -112,7 +114,7 @@ class GenerateProcess(BaseProcess):
             # build prompt image configs
             prompt_image_configs = []
             for _ in range(self.generate_config.num_repeats):
-                for prompt in self.generate_config.prompts:
+                for i, prompt in enumerate(self.generate_config.prompts):
                     width = self.generate_config.width
                     height = self.generate_config.height
                     # prompt = self.clean_prompt(prompt)
@@ -122,6 +124,7 @@ class GenerateProcess(BaseProcess):
                         width, height = random.choice(self.generate_config.size_list)
 
                     prompt_image_configs.append(GenerateImageConfig(
+                        character_name=self.generate_config.characters[i],
                         prompt=prompt,
                         prompt_2=self.generate_config.prompt_2,
                         width=width,

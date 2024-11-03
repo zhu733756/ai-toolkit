@@ -21,15 +21,15 @@ from torch.utils.checkpoint import checkpoint
 from tqdm import tqdm
 from torchvision.transforms import Resize, transforms
 
-from toolkit.assistant_lora import load_assistant_lora_from_path
+# from toolkit.assistant_lora import load_assistant_lora_from_path
 from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.custom_adapter import CustomAdapter
-from toolkit.dequantize import patch_dequantization_on_save
+# from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.ip_adapter import IPAdapter
 from library.model_util import convert_unet_state_dict_to_sd, convert_text_encoder_state_dict_to_sd_v2, \
     convert_vae_state_dict, load_vae
 from toolkit import train_tools
-from toolkit.config_modules import ModelConfig, GenerateImageConfig
+from toolkit.config_modules import ModelConfig, GenerateImageConfig, CHARACTOR_MODELES
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.paths import REPOS_ROOT, KEYMAPS_ROOT
 from toolkit.prompt_utils import inject_trigger_into_prompt, PromptEmbeds, concat_prompt_embeds
@@ -60,7 +60,7 @@ from transformers import CLIPTextModel, CLIPTokenizer, CLIPTextModelWithProjecti
 from toolkit.paths import ORIG_CONFIGS_ROOT, DIFFUSERS_CONFIGS_ROOT
 from huggingface_hub import hf_hub_download
 
-from optimum.quanto import freeze, qfloat8, quantize, QTensor, qint4
+# from optimum.quanto import freeze, qfloat8, quantize, QTensor, qint4
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -91,6 +91,20 @@ DO_NOT_TRAIN_WEIGHTS = [
 
 DeviceStatePreset = Literal['cache_latents', 'generate']
 
+def generate_with_reference(scene_description, character_name):
+    global character_models  # 使用全局字典
+
+    if character_name in CHARACTOR_MODELES:
+        reference_image_path = CHARACTOR_MODELES[character_name]
+        return {
+            "prompt": scene_description,
+            "reference_image": reference_image_path,
+            "reference_only": True,
+            "num_inference_steps": 20,
+            "guidance_scale": 7.5
+        }
+
+    return {}
 
 class BlankNetwork:
 
@@ -133,6 +147,8 @@ class StableDiffusion:
         self.dtype = dtype
         self.torch_dtype = get_torch_dtype(dtype)
         self.device_torch = torch.device(self.device)
+        
+        # torch._C._cuda_setMemoryFraction(0.8, self.device_torch)
 
         self.vae_device_torch = torch.device(self.device) if model_config.vae_device is None else torch.device(
             model_config.vae_device)
@@ -665,7 +681,7 @@ class StableDiffusion:
             
             if self.model_config.quantize:
                 # patch the state dict method
-                patch_dequantization_on_save(transformer)
+                # patch_dequantization_on_save(transformer)
                 quantization_type = qfloat8
                 print("Quantizing transformer")
                 quantize(transformer, weights=quantization_type)
@@ -830,8 +846,8 @@ class StableDiffusion:
 
         if self.model_config.assistant_lora_path is not None:
             print("Loading assistant lora")
-            self.assistant_lora: 'LoRASpecialNetwork' = load_assistant_lora_from_path(
-                self.model_config.assistant_lora_path, self)
+            # self.assistant_lora: 'LoRASpecialNetwork' = load_assistant_lora_from_path(
+            #     self.model_config.assistant_lora_path, self)
 
             if self.invert_assistant_lora:
                 # invert and disable during training
@@ -840,8 +856,8 @@ class StableDiffusion:
                 
         if self.model_config.inference_lora_path is not None:
             print("Loading inference lora")
-            self.assistant_lora: 'LoRASpecialNetwork' = load_assistant_lora_from_path(
-                self.model_config.inference_lora_path, self)
+            # self.assistant_lora: 'LoRASpecialNetwork' = load_assistant_lora_from_path(
+            #     self.model_config.inference_lora_path, self)
             # disable during training
             self.assistant_lora.is_active = False
 
@@ -1115,7 +1131,7 @@ class StableDiffusion:
         if self.network is not None:
             start_multiplier = self.network.multiplier
 
-        # pipeline.to(self.device_torch)
+        pipeline.to(self.device_torch)
 
         with network:
             with torch.no_grad():
@@ -1125,10 +1141,14 @@ class StableDiffusion:
                 for i in tqdm(range(len(image_configs)), desc=f"Generating Images", leave=False):
                     gen_config = image_configs[i]
 
-                    extra = {}
+                    extra = generate_with_reference(gen_config.prompt, gen_config.charactor)
                     validation_image = None
-                    if self.adapter is not None and gen_config.adapter_image_path is not None:
-                        validation_image = Image.open(gen_config.adapter_image_path).convert("RGB")
+                    if self.adapter is not None:
+                        validation_image=None
+                        image_path = gen_config.adapter_image_path or extra.pop("reference_image")
+                        if image_path:
+                            print(f"using exsts images {image_path}") 
+                            validation_image = Image.open(image_path).convert("RGB")
                         if isinstance(self.adapter, T2IAdapter):
                             # not sure why this is double??
                             validation_image = validation_image.resize((gen_config.width * 2, gen_config.height * 2))
@@ -1218,7 +1238,7 @@ class StableDiffusion:
                         unconditional_embeds = self.adapter(unconditional_embeds, unconditional_clip_embeds, is_unconditional=True)
 
                     if self.adapter is not None and isinstance(self.adapter,
-                                                               CustomAdapter) and validation_image is not None:
+                                                            CustomAdapter) and validation_image is not None:
                         conditional_embeds = self.adapter.condition_encoded_embeds(
                             tensors_0_1=validation_image,
                             prompt_embeds=conditional_embeds,
@@ -1333,11 +1353,11 @@ class StableDiffusion:
                             prompt=None,
                             prompt_embeds=conditional_embeds.text_embeds.to(self.device_torch, dtype=self.unet.dtype),
                             prompt_attention_mask=conditional_embeds.attention_mask.to(self.device_torch,
-                                                                                       dtype=self.unet.dtype),
+                                                                                    dtype=self.unet.dtype),
                             negative_prompt_embeds=unconditional_embeds.text_embeds.to(self.device_torch,
-                                                                                       dtype=self.unet.dtype),
+                                                                                    dtype=self.unet.dtype),
                             negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(self.device_torch,
-                                                                                                  dtype=self.unet.dtype),
+                                                                                                dtype=self.unet.dtype),
                             negative_prompt=None,
                             # negative_prompt=gen_config.negative_prompt,
                             height=gen_config.height,
@@ -1354,11 +1374,11 @@ class StableDiffusion:
                             prompt=None,
                             prompt_embeds=conditional_embeds.text_embeds.to(self.device_torch, dtype=self.unet.dtype),
                             prompt_attention_mask=conditional_embeds.attention_mask.to(self.device_torch,
-                                                                                       dtype=self.unet.dtype),
+                                                                                    dtype=self.unet.dtype),
                             negative_prompt_embeds=unconditional_embeds.text_embeds.to(self.device_torch,
-                                                                                       dtype=self.unet.dtype),
+                                                                                    dtype=self.unet.dtype),
                             negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(self.device_torch,
-                                                                                                  dtype=self.unet.dtype),
+                                                                                                dtype=self.unet.dtype),
                             negative_prompt=None,
                             # negative_prompt=gen_config.negative_prompt,
                             height=gen_config.height,
@@ -1857,8 +1877,8 @@ class StableDiffusion:
                         **kwargs,
                     )[0]
 
-                    if isinstance(noise_pred, QTensor):
-                        noise_pred = noise_pred.dequantize()
+                    # if isinstance(noise_pred, QTensor):
+                    #     noise_pred = noise_pred.dequantize()
 
                     noise_pred = rearrange(
                         noise_pred,
@@ -1877,8 +1897,8 @@ class StableDiffusion:
                         pooled_projections=text_embeddings.pooled_embeds.to(self.device_torch, self.torch_dtype),
                         **kwargs,
                     ).sample
-                    if isinstance(noise_pred, QTensor):
-                        noise_pred = noise_pred.dequantize()
+                    # if isinstance(noise_pred, QTensor):
+                    #     noise_pred = noise_pred.dequantize()
                 elif self.is_auraflow:
                     # aura use timestep value between 0 and 1, with t=1 as noise and t=0 as the image
                     # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
